@@ -34,6 +34,8 @@ __all__ = [
     "triads_by_type",
     "triad_type",
     "random_triad",
+    "all_triads_mod", 
+    "triad_type_mod"
 ]
 
 #: The integer codes representing each type of triad.
@@ -209,7 +211,49 @@ def triadic_census(G):
     census["003"] = ((n * (n - 1) * (n - 2)) // 6) - sum(census.values())
     return census
 
+def triadic_census_mod(G, my_types):
+    """Determines the triadic census of a directed graph.
 
+    The triadic census is a count of how many of the 16 possible types of
+    triads are present in a directed graph.
+
+    Parameters
+    ----------
+    G : digraph
+    my_types : relevant types for str.bal, for each return ?subgraph
+
+    Returns
+    -------
+    census : dict
+       Dictionary with triad type as keys and number of occurrences as values.
+    """
+    # Initialize the count for each triad to be zero.
+    census = {name: 0 for name in TRIAD_NAMES}
+    n = len(G)
+    # m = dict(zip(G, range(n)))
+    m = {v: i for i, v in enumerate(G)}
+    for v in G:
+        vnbrs = set(G.pred[v]) | set(G.succ[v])
+        for u in vnbrs:
+            if m[u] <= m[v]:
+                continue
+            neighbors = (vnbrs | set(G.succ[u]) | set(G.pred[u])) - {u, v}
+            # Calculate dyadic triads instead of counting them.
+            if v in G[u] and u in G[v]:
+                census["102"] += n - len(neighbors) - 2
+            else:
+                census["012"] += n - len(neighbors) - 2
+            # Count connected triads.
+            for w in neighbors:
+                if m[u] < m[w] or (
+                    m[v] < m[w] < m[u] and v not in G.pred[w] and v not in G.succ[w]
+                ):
+                    code = _tricode(G, v, u, w)
+                    census[TRICODE_TO_NAME[code]] += 1
+    # null triads = total number of possible triads - all found triads
+    census["003"] = ((n * (n - 1) * (n - 2)) // 6) - sum(census.values())
+    return census
+    ### end custom
 
 def is_triad(G):
     """Returns True if the graph G is a triad, else False.
@@ -270,7 +314,27 @@ def all_triads(G):
     for triplet in triplets:
         yield G.subgraph(triplet).copy()
 
+@not_implemented_for("undirected")
+def all_triads_mod(G):
+    """A generator of all possible triads in G.
 
+    Parameters
+    ----------
+    G : digraph
+       A NetworkX DiGraph
+
+    Returns
+    -------
+    all_triads : generator of DiGraphs
+       Generator of triads (order-3 DiGraphs)
+    """
+    triplets = combinations(G.nodes(), 3)
+    for triplet in triplets:
+        subg = G.subgraph(triplet).copy()
+        if len(subg.edges()) > 2:
+            yield subg 
+        else:
+            continue
 
 #[docs]
 @not_implemented_for("undirected")
@@ -386,7 +450,92 @@ def triad_type(G):
     elif num_edges == 6:
         return "300"
 
+@not_implemented_for("undirected")
+def triad_type_mod(G):
+    """Returns the sociological triad type for a triad.
 
+    Parameters
+    ----------
+    G : digraph
+       A NetworkX DiGraph with 3 nodes
+
+    Returns
+    -------
+    triad_type : str
+       A string identifying the triad type
+
+    Notes
+    -----
+    There can be 6 unique edges in a triad (order-3 DiGraph) (so 2^^6=64 unique
+    triads given 3 nodes). These 64 triads each display exactly 1 of 16
+    topologies of triads (topologies can be permuted). These topologies are
+    identified by the following notation:
+
+    {m}{a}{n}{type} (for example: 111D, 210, 102)
+
+    Here:
+
+    {m}     = number of mutual ties (takes 0, 1, 2, 3); a mutual tie is (0,1)
+              AND (1,0)
+    {a}     = number of assymmetric ties (takes 0, 1, 2, 3); an assymmetric tie
+              is (0,1) BUT NOT (1,0) or vice versa
+    {n}     = number of null ties (takes 0, 1, 2, 3); a null tie is NEITHER
+              (0,1) NOR (1,0)
+    {type}  = a letter (takes U, D, C, T) corresponding to up, down, cyclical
+              and transitive. This is only used for topologies that can have
+              more than one form (eg: 021D and 021U).
+
+    References
+    ----------
+    .. [1] Snijders, T. (2012). "Transitivity and triads." University of
+        Oxford.
+        http://www.stats.ox.ac.uk/snijders/Trans_Triads_ha.pdf
+    """
+    if not is_triad(G):
+        raise nx.NetworkXAlgorithmError("G is not a triad (order-3 DiGraph)")
+    num_edges = len(G.edges())
+#     if num_edges == 0:
+#         return "003"
+#     elif num_edges == 1:
+#         return "012"
+#     elif num_edges == 2:
+#         e1, e2 = G.edges()
+#         if set(e1) == set(e2):
+#             return "102"
+#         elif e1[0] == e2[0]:
+#             return "021D"
+#         elif e1[1] == e2[1]:
+#             return "021U"
+#         elif e1[1] == e2[0] or e2[1] == e1[0]:
+#             return "021C"
+    if num_edges == 3:
+        for (e1, e2, e3) in permutations(G.edges(), 3):
+            if set(e1) == set(e2):
+                if e3[0] in e1:
+                    return "111U"
+                # e3[1] in e1:
+                return "111D"
+            elif set(e1).symmetric_difference(set(e2)) == set(e3):
+                if {e1[0], e2[0], e3[0]} == {e1[0], e2[0], e3[0]} == set(G.nodes()):
+                    return "030C"
+                # e3 == (e1[0], e2[1]) and e2 == (e1[1], e3[1]):
+                return "030T"
+    elif num_edges == 4:
+        for (e1, e2, e3, e4) in permutations(G.edges(), 4):
+            if set(e1) == set(e2):
+                # identify pair of symmetric edges (which necessarily exists)
+                if set(e3) == set(e4):
+                    return "201"
+                if {e3[0]} == {e4[0]} == set(e3).intersection(set(e4)):
+                    return "120D"
+                if {e3[1]} == {e4[1]} == set(e3).intersection(set(e4)):
+                    return "120U"
+                if e3[1] == e4[0]:
+                    return "120C"
+    elif num_edges == 5:
+        return "210"
+    elif num_edges == 6:
+        return "300"
 
 #[docs]
 @not_implemented_for("undirected")
